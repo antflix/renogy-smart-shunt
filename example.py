@@ -2,7 +2,7 @@ import logging
 import configparser
 import os
 import sys
-from renogybt import InverterClient, RoverClient, RoverHistoryClient, BatteryClient, DataLogger, Utils
+from renogybt import InverterClient, RoverClient, RoverHistoryClient, BatteryClient, DataLogger, ShuntClient, Utils
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -38,5 +38,7 @@ elif config['device']['type'] == 'RNG_BATT':
     BatteryClient(config, on_data_received, on_error).connect()
 elif config['device']['type'] == 'RNG_INVT':
     InverterClient(config, on_data_received, on_error).connect()
+elif config['device']['type'] == 'RNG_SHNT':
+    ShuntClient(config, on_data_received, on_error).connect()
 else:
     logging.error("unknown device type")
