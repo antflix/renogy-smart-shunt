@@ -2,7 +2,9 @@ import logging
 # from .BaseClient import BaseClient
 from .BaseShuntClient import BaseClient
 from .Utils import bytes_to_int, parse_temperature
-
+import csv
+import time
+from datetime import datetime
 # Read and parse BT-1 RS232 type bluetooth module connected to Renogy Rover/Wanderer/Adventurer
 # series charge controllers. Also works with BT-2 RS485 module on Rover Elite, DC Charger etc.
 # Does not support Communication Hub with multiple devices connected
@@ -34,6 +36,72 @@ BATTERY_TYPE = {
     4: 'lithium',
     5: 'custom'
 }
+last_values = {}
+
+def scan_unknown_bytes(bs, skip_ranges=[(21, 24), (25, 28), (30, 32), (66, 69), (70, 73)],
+                       threshold=0.1, output_file="renogy_scan.csv"):
+    global last_values
+    max_len = len(bs)
+    lengths = [1, 2, 3, 4]
+    scales = [1, 0.1, 0.01, 0.001]
+    signed_options = [False, True]
+    results = []
+
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+    for offset in range(max_len):
+        if any(start <= offset < end for start, end in skip_ranges):
+            continue
+
+        for length in lengths:
+            if offset + length > max_len:
+                continue
+
+            raw_bytes = bs[offset:offset+length]
+            for signed in signed_options:
+                try:
+                    value = int.from_bytes(raw_bytes, byteorder='big', signed=signed)
+                    for scale in scales:
+                        scaled_value = round(value * scale, 3)
+                        key = f"{offset}_{length}_{signed}_{scale}"
+                        last_val = last_values.get(key, scaled_value)
+                        delta = round(scaled_value - last_val, 3)
+                        trend = "="
+                        if delta > threshold:
+                            trend = "↑"
+                        elif delta < -threshold:
+                            trend = "↓"
+                        last_values[key] = scaled_value
+
+                        results.append({
+                            'timestamp': timestamp,
+                            'offset': offset,
+                            'length': length,
+                            'signed': signed,
+                            'scale': scale,
+                            'raw': raw_bytes.hex(),
+                            'value': scaled_value,
+                            'delta': delta,
+                            'trend': trend
+                        })
+                except Exception:
+                    continue
+
+    file_exists = False
+    try:
+        with open(output_file, "r"):
+            file_exists = True
+    except FileNotFoundError:
+        pass
+
+    with open(output_file, "a", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=results[0].keys())
+        if not file_exists:
+            writer.writeheader()
+        writer.writerows(results)
+
+    print(f"[{timestamp}] Scan written with {len(results)} rows.")
+
 
 class ShuntClient(BaseClient):
     def __init__(self, config, on_data_callback=None, on_error_callback=None):
@@ -97,6 +165,8 @@ class ShuntClient(BaseClient):
         # - time_remaining
         # - discharge_duration
         # - consumed_amp_hours
+        scan_unknown_bytes(bs)
+
         self.data.update(data)
         # logging.debug(msg=f"DATA: {self.data}")
         return data
